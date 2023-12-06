@@ -61,6 +61,8 @@ func main() {
 
 	zap.ReplaceGlobals(l)
 
+	zap.L().Debug("debug logger is enabled")
+
 	zap.L().Info("creating kms server",
 		zap.String("health-port", *healthPort),
 		zap.String("healthz-path", *healthzPath),

@@ -39,6 +39,7 @@ type V2Plugin struct {
 	keyID         string
 	encryptionCtx map[string]*string
 	healthCheck   *SharedHealthCheck
+	keyCache      map[string]bool
 }
 
 // New returns a new *V2Plugin
@@ -61,6 +62,7 @@ func newPluginV2(
 		svc:         svc,
 		keyID:       key,
 		healthCheck: healthCheck,
+		keyCache:    make(map[string]bool),
 	}
 	if len(encryptionCtx) > 0 {
 		p.encryptionCtx = make(map[string]*string)
@@ -128,6 +130,10 @@ func (p *V2Plugin) Status(ctx context.Context, request *pb.StatusRequest) (*pb.S
 func (p *V2Plugin) Encrypt(ctx context.Context, request *pb.EncryptRequest) (*pb.EncryptResponse, error) {
 	zap.L().Debug("starting encrypt operation")
 
+	zap.L().Debug("##1: plugin has been requested to encrypt: '" + string(request.Plaintext[:]) + "'")
+	p.keyCache[string(request.Plaintext[:])] = true
+	zap.L().Debug(fmt.Sprintf("###: Number of keys in plugin cache: %d", len(p.keyCache)))
+
 	startTime := time.Now()
 	input := &kms.EncryptInput{
 		Plaintext: request.Plaintext,
@@ -154,6 +160,9 @@ func (p *V2Plugin) Encrypt(ctx context.Context, request *pb.EncryptRequest) (*pb
 	zap.L().Debug("encrypt operation successful")
 	kmsLatencyMetric.WithLabelValues(p.keyID, kmsplugin.StatusSuccess, kmsplugin.OperationEncrypt, GRPC_V2).Observe(kmsplugin.GetMillisecondsSince(startTime))
 	kmsOperationCounter.WithLabelValues(p.keyID, kmsplugin.StatusSuccess, kmsplugin.OperationEncrypt, GRPC_V2).Inc()
+
+	zap.L().Debug("##2: plugin encrypted plaintext DEK to: '" + fmt.Sprintf("0x%x", result.CiphertextBlob) + "'")
+
 	return &pb.EncryptResponse{
 		Ciphertext: append([]byte(kmsplugin.KMSStorageVersionV2), result.CiphertextBlob...),
 		KeyId:      p.keyID,
@@ -163,6 +172,8 @@ func (p *V2Plugin) Encrypt(ctx context.Context, request *pb.EncryptRequest) (*pb
 // Decrypt executes the decrypt operation using AWS KMS
 func (p *V2Plugin) Decrypt(ctx context.Context, request *pb.DecryptRequest) (*pb.DecryptResponse, error) {
 	zap.L().Debug("starting decrypt operation")
+
+	zap.L().Debug("##3: plugin has been requested to decrypt: '" + fmt.Sprintf("0x%x", request.Ciphertext) + "'")
 
 	startTime := time.Now()
 	storageVersion := kmsplugin.KMSStorageVersion(request.Ciphertext[0])
@@ -197,6 +208,11 @@ func (p *V2Plugin) Decrypt(ctx context.Context, request *pb.DecryptRequest) (*pb
 	zap.L().Debug("decrypt operation successful")
 	kmsLatencyMetric.WithLabelValues(p.keyID, kmsplugin.StatusSuccess, kmsplugin.OperationDecrypt, GRPC_V2).Observe(kmsplugin.GetMillisecondsSince(startTime))
 	kmsOperationCounter.WithLabelValues(p.keyID, kmsplugin.StatusSuccess, kmsplugin.OperationDecrypt, GRPC_V2).Inc()
+
+	p.keyCache[string(result.Plaintext[:])] = true
+	zap.L().Debug(fmt.Sprintf("###: Number of keys in plugin cache: %d", len(p.keyCache)))
+	zap.L().Debug("##4: plugin decrypted encrypted DEK to: '" + string(result.Plaintext[:]) + "'")
+
 	return &pb.DecryptResponse{Plaintext: result.Plaintext}, nil
 }
 
