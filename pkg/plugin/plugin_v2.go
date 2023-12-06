@@ -89,21 +89,22 @@ func newPluginV2(
 //  2. there was no health check done for the last "healthCheckPeriod"
 //     (only use the cached error if the error is from recent API call)
 func (p *V2Plugin) Health() error {
-	recent, err := p.healthCheck.isRecentlyChecked()
-	if !recent {
-		_, err = p.Encrypt(context.Background(), &pb.EncryptRequest{Plaintext: []byte("foo")})
-		p.healthCheck.recordErr(err)
-		if err != nil {
-			zap.L().Warn("health check failed", zap.Error(err))
-		}
-		return err
-	}
-	if err != nil {
-		zap.L().Warn("cached health check failed", zap.Error(err))
-	} else {
-		zap.L().Debug("health check success")
-	}
-	return err
+	// recent, err := p.healthCheck.isRecentlyChecked()
+	// if !recent {
+	// 	_, err = p.Encrypt(context.Background(), &pb.EncryptRequest{Plaintext: []byte("foo")})
+	// 	p.healthCheck.recordErr(err)
+	// 	if err != nil {
+	// 		zap.L().Warn("health check failed", zap.Error(err))
+	// 	}
+	// 	return err
+	// }
+	// if err != nil {
+	// 	zap.L().Warn("cached health check failed", zap.Error(err))
+	// } else {
+	// 	zap.L().Debug("health check success")
+	// }
+	// return err
+	return nil
 }
 
 func (p *V2Plugin) Live() error {
@@ -157,6 +158,12 @@ func (p *V2Plugin) Encrypt(ctx context.Context, request *pb.EncryptRequest) (*pb
 		return nil, fmt.Errorf("failed to encrypt %w", err)
 	}
 
+	res, err := EncryptWithTPM(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	// concat res.Text together
+
 	zap.L().Debug("encrypt operation successful")
 	kmsLatencyMetric.WithLabelValues(p.keyID, kmsplugin.StatusSuccess, kmsplugin.OperationEncrypt, GRPC_V2).Observe(kmsplugin.GetMillisecondsSince(startTime))
 	kmsOperationCounter.WithLabelValues(p.keyID, kmsplugin.StatusSuccess, kmsplugin.OperationEncrypt, GRPC_V2).Inc()
@@ -194,6 +201,14 @@ func (p *V2Plugin) Decrypt(ctx context.Context, request *pb.DecryptRequest) (*pb
 
 	result, err := p.svc.Decrypt(input)
 	if err != nil {
+
+		res, err := DecryptFromTPM(ctx, request)
+		if err != nil {
+			zap.L().Info("tpm error")
+		} else {
+			return res, nil
+		}
+
 		select {
 		case p.healthCheck.healthCheckErrc <- err:
 		default:

@@ -21,9 +21,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/kms"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+
 	pb "k8s.io/kms/apis/v2"
 	"sigs.k8s.io/aws-encryption-provider/pkg/cloud"
 	"sigs.k8s.io/aws-encryption-provider/pkg/kmsplugin"
@@ -355,4 +358,25 @@ func TestHealthManyRequestsV2(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestSample(t *testing.T) {
+	c, err := cloud.New("ap-south-1", "", 0, 0)
+	require.NoError(t, err)
+
+	kmsArn := "<REDACTED>"
+	p2 := NewV2(kmsArn, c, nil, nil)
+
+	res, err := p2.svc.Encrypt(&kms.EncryptInput{
+		Plaintext: []byte("foo"),
+		KeyId:     aws.String(kmsArn),
+	})
+	require.NoError(t, err)
+
+	res2, err := p2.svc.Decrypt(&kms.DecryptInput{
+		CiphertextBlob: res.CiphertextBlob,
+	})
+	require.NoError(t, err)
+
+	t.Fatalf("foo was encrypted as 0x%x and decrypted back to %q", res.CiphertextBlob, res2.Plaintext)
 }
