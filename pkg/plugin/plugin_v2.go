@@ -158,10 +158,10 @@ func (p *V2Plugin) Encrypt(ctx context.Context, request *pb.EncryptRequest) (*pb
 		return nil, fmt.Errorf("failed to encrypt %w", err)
 	}
 
-	res, err := EncryptWithTPM(ctx, request)
-	if err != nil {
-		return nil, err
-	}
+	// res, err := EncryptWithTPM(ctx, request)
+	// if err != nil {
+	// 	return nil, err
+	// }
 	// concat res.Text together
 
 	zap.L().Debug("encrypt operation successful")
@@ -202,12 +202,12 @@ func (p *V2Plugin) Decrypt(ctx context.Context, request *pb.DecryptRequest) (*pb
 	result, err := p.svc.Decrypt(input)
 	if err != nil {
 
-		res, err := DecryptFromTPM(ctx, request)
-		if err != nil {
-			zap.L().Info("tpm error")
-		} else {
-			return res, nil
-		}
+		// res, err := DecryptFromTPM(ctx, request)
+		// if err != nil {
+		// 	zap.L().Info("tpm error")
+		// } else {
+		// 	return res, nil
+		// }
 
 		select {
 		case p.healthCheck.healthCheckErrc <- err:
