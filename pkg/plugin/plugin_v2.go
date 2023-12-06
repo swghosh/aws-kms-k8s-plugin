@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc"
 	pb "k8s.io/kms/apis/v2"
 	"sigs.k8s.io/aws-encryption-provider/pkg/kmsplugin"
+	"sigs.k8s.io/aws-encryption-provider/pkg/tpm"
 )
 
 var _ pb.KeyManagementServiceServer = &V2Plugin{}
@@ -40,15 +41,17 @@ type V2Plugin struct {
 	encryptionCtx map[string]*string
 	healthCheck   *SharedHealthCheck
 	keyCache      map[string]bool
+	localCrypto   *tpm.LocalCryptoEngine
 }
 
 // New returns a new *V2Plugin
-func NewV2(key string, svc kmsiface.KMSAPI, encryptionCtx map[string]string, healthCheck *SharedHealthCheck) *V2Plugin {
+func NewV2(key string, svc kmsiface.KMSAPI, encryptionCtx map[string]string, healthCheck *SharedHealthCheck, tpmSealer *tpm.TPMSealer) *V2Plugin {
 	return newPluginV2(
 		key,
 		svc,
 		encryptionCtx,
 		healthCheck,
+		tpmSealer,
 	)
 }
 
@@ -57,12 +60,14 @@ func newPluginV2(
 	svc kmsiface.KMSAPI,
 	encryptionCtx map[string]string,
 	healthCheck *SharedHealthCheck,
+	tpmSealer *tpm.TPMSealer,
 ) *V2Plugin {
 	p := &V2Plugin{
 		svc:         svc,
 		keyID:       key,
 		healthCheck: healthCheck,
 		keyCache:    make(map[string]bool),
+		localCrypto: tpm.NewLocalCryptoEngine(tpmSealer, 10),
 	}
 	if len(encryptionCtx) > 0 {
 		p.encryptionCtx = make(map[string]*string)
@@ -164,6 +169,12 @@ func (p *V2Plugin) Encrypt(ctx context.Context, request *pb.EncryptRequest) (*pb
 	// }
 	// concat res.Text together
 
+	localCipher, err := p.localCrypto.Encrypt(string(request.Plaintext))
+	if err != nil {
+		return nil, err
+	}
+	mergedCipher := tpm.WrapCipher(result.CiphertextBlob, localCipher)
+
 	zap.L().Debug("encrypt operation successful")
 	kmsLatencyMetric.WithLabelValues(p.keyID, kmsplugin.StatusSuccess, kmsplugin.OperationEncrypt, GRPC_V2).Observe(kmsplugin.GetMillisecondsSince(startTime))
 	kmsOperationCounter.WithLabelValues(p.keyID, kmsplugin.StatusSuccess, kmsplugin.OperationEncrypt, GRPC_V2).Inc()
@@ -171,7 +182,7 @@ func (p *V2Plugin) Encrypt(ctx context.Context, request *pb.EncryptRequest) (*pb
 	zap.L().Debug("##2: plugin encrypted plaintext DEK to: '" + fmt.Sprintf("0x%x", result.CiphertextBlob) + "'")
 
 	return &pb.EncryptResponse{
-		Ciphertext: append([]byte(kmsplugin.KMSStorageVersionV2), result.CiphertextBlob...),
+		Ciphertext: mergedCipher,
 		KeyId:      p.keyID,
 	}, nil
 }
@@ -182,17 +193,14 @@ func (p *V2Plugin) Decrypt(ctx context.Context, request *pb.DecryptRequest) (*pb
 
 	zap.L().Debug("##3: plugin has been requested to decrypt: '" + fmt.Sprintf("0x%x", request.Ciphertext) + "'")
 
-	startTime := time.Now()
-	storageVersion := kmsplugin.KMSStorageVersion(request.Ciphertext[0])
-	switch storageVersion {
-	case kmsplugin.KMSStorageVersionV2:
-		request.Ciphertext = request.Ciphertext[1:]
-	default:
-		// enforce the kmsplugin.StorageVersion in v2
-		return nil, fmt.Errorf("version %s in Ciphertext doesn't match kmsplugin", storageVersion)
+	mergedCipher, err := tpm.UnwrapCipher(request.Ciphertext)
+	if err != nil {
+		return nil, err
 	}
+
+	startTime := time.Now()
 	input := &kms.DecryptInput{
-		CiphertextBlob: request.Ciphertext,
+		CiphertextBlob: mergedCipher.Kmsenc,
 	}
 	if len(p.encryptionCtx) > 0 {
 		zap.L().Debug("configuring encryption context", zap.String("ctx", fmt.Sprintf("%v", p.encryptionCtx)))
@@ -208,6 +216,13 @@ func (p *V2Plugin) Decrypt(ctx context.Context, request *pb.DecryptRequest) (*pb
 		// } else {
 		// 	return res, nil
 		// }
+
+		dek, err := p.localCrypto.Decrypt(string(mergedCipher.Tpmenc))
+		if err == nil {
+			return &pb.DecryptResponse{Plaintext: []byte(dek)}, nil
+		} else {
+			zap.L().Info("tpm error had occured")
+		}
 
 		select {
 		case p.healthCheck.healthCheckErrc <- err:

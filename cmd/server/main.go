@@ -20,6 +20,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/google/go-tpm/legacy/tpm2"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	flag "github.com/spf13/pflag"
 	"go.uber.org/zap"
@@ -30,6 +31,7 @@ import (
 	"sigs.k8s.io/aws-encryption-provider/pkg/logging"
 	"sigs.k8s.io/aws-encryption-provider/pkg/plugin"
 	"sigs.k8s.io/aws-encryption-provider/pkg/server"
+	"sigs.k8s.io/aws-encryption-provider/pkg/tpm"
 )
 
 func main() {
@@ -86,9 +88,21 @@ func main() {
 	go sharedHealthCheck.Start()
 	defer sharedHealthCheck.Stop()
 	s := server.New()
+
 	p := plugin.New(*key, c, *encryptionCtx, sharedHealthCheck)
 	p.Register(s.Server)
-	p2 := plugin.NewV2(*key, c, *encryptionCtx, sharedHealthCheck)
+
+	tpmDevice, err := tpm2.OpenTPM()
+	if err != nil {
+		zap.L().Fatal("Failed to access local tpm device", zap.Error(err))
+	}
+
+	tpmSealer, err := tpm.NewTPMSealer(&tpmDevice, 14)
+	if err != nil {
+		zap.L().Fatal("Failed to create tpm sealer service", zap.Error(err))
+	}
+
+	p2 := plugin.NewV2(*key, c, *encryptionCtx, sharedHealthCheck, tpmSealer)
 	p2.Register(s.Server)
 	go func() {
 		http.Handle(*healthzPath, healthz.NewHandler(p))

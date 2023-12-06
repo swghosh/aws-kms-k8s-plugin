@@ -169,7 +169,7 @@ func TestEncryptV2(t *testing.T) {
 			c.SetEncryptResp(tc.output, tc.err)
 			sharedHealthCheck := NewSharedHealthCheck(DefaultHealthCheckPeriod, DefaultErrcBufSize)
 			go sharedHealthCheck.Start()
-			p := NewV2(key, c, nil, sharedHealthCheck)
+			p := NewV2(key, c, nil, sharedHealthCheck, nil)
 			defer func() {
 				sharedHealthCheck.Stop()
 			}()
@@ -247,7 +247,7 @@ func TestDecryptV2(t *testing.T) {
 			c.SetDecryptResp(tc.output, tc.err)
 			sharedHealthCheck := NewSharedHealthCheck(DefaultHealthCheckPeriod, DefaultErrcBufSize)
 			go sharedHealthCheck.Start()
-			p := NewV2(key, c, tc.ctx, sharedHealthCheck)
+			p := NewV2(key, c, tc.ctx, sharedHealthCheck, nil)
 			defer func() {
 				sharedHealthCheck.Stop()
 			}()
@@ -290,7 +290,7 @@ func TestHealthV2(t *testing.T) {
 		c := &cloud.KMSMock{}
 		sharedHealthCheck := NewSharedHealthCheck(DefaultHealthCheckPeriod, DefaultErrcBufSize)
 		go sharedHealthCheck.Start()
-		p := NewV2(key, c, nil, sharedHealthCheck)
+		p := NewV2(key, c, nil, sharedHealthCheck, nil)
 		defer func() {
 			sharedHealthCheck.Stop()
 		}()
@@ -334,7 +334,7 @@ func TestHealthManyRequestsV2(t *testing.T) {
 	c := &cloud.KMSMock{}
 	sharedHealthCheck := NewSharedHealthCheck(DefaultHealthCheckPeriod, DefaultErrcBufSize)
 	go sharedHealthCheck.Start()
-	p := newPluginV2(key, c, nil, sharedHealthCheck)
+	p := newPluginV2(key, c, nil, sharedHealthCheck, nil)
 	defer func() {
 		sharedHealthCheck.Stop()
 	}()
@@ -365,7 +365,7 @@ func TestSample(t *testing.T) {
 	require.NoError(t, err)
 
 	kmsArn := "<REDACTED>"
-	p2 := NewV2(kmsArn, c, nil, nil)
+	p2 := NewV2(kmsArn, c, nil, nil, nil)
 
 	res, err := p2.svc.Encrypt(&kms.EncryptInput{
 		Plaintext: []byte("foo"),
