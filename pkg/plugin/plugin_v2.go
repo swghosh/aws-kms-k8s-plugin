@@ -155,7 +155,9 @@ func (p *V2Plugin) Encrypt(ctx context.Context, request *pb.EncryptRequest) (*pb
 		failLabel := kmsplugin.GetStatusLabel(err)
 		kmsLatencyMetric.WithLabelValues(p.keyID, failLabel, kmsplugin.OperationEncrypt, GRPC_V2).Observe(kmsplugin.GetMillisecondsSince(startTime))
 		kmsOperationCounter.WithLabelValues(p.keyID, failLabel, kmsplugin.OperationEncrypt, GRPC_V2).Inc()
-		return nil, fmt.Errorf("failed to encrypt %w", err)
+		// return nil, fmt.Errorf("failed to encrypt %w", err)
+		zap.L().Info("cloud kms failed to encrypt")
+		result.CiphertextBlob = nil
 	}
 
 	// res, err := EncryptWithTPM(ctx, request)
