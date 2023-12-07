@@ -40,7 +40,6 @@ type V2Plugin struct {
 	keyID         string
 	encryptionCtx map[string]*string
 	healthCheck   *SharedHealthCheck
-	keyCache      map[string]bool
 	localCrypto   *tpm.LocalCryptoEngine
 }
 
@@ -66,7 +65,6 @@ func newPluginV2(
 		svc:         svc,
 		keyID:       key,
 		healthCheck: healthCheck,
-		keyCache:    make(map[string]bool),
 		localCrypto: tpm.NewLocalCryptoEngine(tpmSealer, 10),
 	}
 	if len(encryptionCtx) > 0 {
@@ -135,10 +133,7 @@ func (p *V2Plugin) Status(ctx context.Context, request *pb.StatusRequest) (*pb.S
 // Encrypt executes the encryption operation using AWS KMS
 func (p *V2Plugin) Encrypt(ctx context.Context, request *pb.EncryptRequest) (*pb.EncryptResponse, error) {
 	zap.L().Debug("starting encrypt operation")
-
-	zap.L().Debug(fmt.Sprintf("##1: plugin has been requested to encrypt: %d bytes", len(request.Plaintext)))
-	p.keyCache[string(request.Plaintext[:])] = true
-	zap.L().Debug(fmt.Sprintf("###: Number of keys in plugin cache: %d", len(p.keyCache)))
+	zap.L().Debug(fmt.Sprintf("plugin has been requested to encrypt: %d bytes", len(request.Plaintext)))
 
 	startTime := time.Now()
 	input := &kms.EncryptInput{
@@ -177,14 +172,12 @@ func (p *V2Plugin) Encrypt(ctx context.Context, request *pb.EncryptRequest) (*pb
 	if err != nil {
 		return nil, err
 	}
-	zap.L().Debug(fmt.Sprintf("##x1: len(kmsCipher): %d bytes, len(tpmCipher): %d bytes", len(result.CiphertextBlob), len(localCipher)))
-	zap.L().Debug(fmt.Sprintf("##x2: mergedCipher has length of %d bytes", len(mergedCipher)))
+	zap.L().Debug(fmt.Sprintf("cipher text from KMS has %d bytes, cipher text from local TPM has %d bytes", len(result.CiphertextBlob), len(localCipher)))
+	zap.L().Debug(fmt.Sprintf("merged cipher has length of %d bytes", len(mergedCipher)))
 
 	zap.L().Debug("encrypt operation successful")
 	kmsLatencyMetric.WithLabelValues(p.keyID, kmsplugin.StatusSuccess, kmsplugin.OperationEncrypt, GRPC_V2).Observe(kmsplugin.GetMillisecondsSince(startTime))
 	kmsOperationCounter.WithLabelValues(p.keyID, kmsplugin.StatusSuccess, kmsplugin.OperationEncrypt, GRPC_V2).Inc()
-
-	zap.L().Debug("##2: plugin encrypted plaintext DEK to: '" + fmt.Sprintf("0x%x", result.CiphertextBlob) + "'")
 
 	return &pb.EncryptResponse{
 		Ciphertext: mergedCipher,
@@ -195,8 +188,6 @@ func (p *V2Plugin) Encrypt(ctx context.Context, request *pb.EncryptRequest) (*pb
 // Decrypt executes the decrypt operation using AWS KMS
 func (p *V2Plugin) Decrypt(ctx context.Context, request *pb.DecryptRequest) (*pb.DecryptResponse, error) {
 	zap.L().Debug("starting decrypt operation")
-
-	zap.L().Debug("##3: plugin has been requested to decrypt: '" + fmt.Sprintf("0x%x", request.Ciphertext) + "'")
 
 	mergedCipher, err := tpm.UnwrapCipherV2(request.Ciphertext)
 	if err != nil {
@@ -243,10 +234,6 @@ func (p *V2Plugin) Decrypt(ctx context.Context, request *pb.DecryptRequest) (*pb
 	zap.L().Debug("decrypt operation successful")
 	kmsLatencyMetric.WithLabelValues(p.keyID, kmsplugin.StatusSuccess, kmsplugin.OperationDecrypt, GRPC_V2).Observe(kmsplugin.GetMillisecondsSince(startTime))
 	kmsOperationCounter.WithLabelValues(p.keyID, kmsplugin.StatusSuccess, kmsplugin.OperationDecrypt, GRPC_V2).Inc()
-
-	p.keyCache[string(result.Plaintext[:])] = true
-	zap.L().Debug(fmt.Sprintf("###: Number of keys in plugin cache: %d", len(p.keyCache)))
-	zap.L().Debug("##4: plugin decrypted encrypted DEK to: '" + string(result.Plaintext[:]) + "'")
 
 	return &pb.DecryptResponse{Plaintext: result.Plaintext}, nil
 }
