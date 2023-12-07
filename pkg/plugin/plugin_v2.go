@@ -136,7 +136,7 @@ func (p *V2Plugin) Status(ctx context.Context, request *pb.StatusRequest) (*pb.S
 func (p *V2Plugin) Encrypt(ctx context.Context, request *pb.EncryptRequest) (*pb.EncryptResponse, error) {
 	zap.L().Debug("starting encrypt operation")
 
-	zap.L().Debug("##1: plugin has been requested to encrypt: '" + string(request.Plaintext[:]) + "'")
+	zap.L().Debug(fmt.Sprintf("##1: plugin has been requested to encrypt: %d bytes", len(request.Plaintext)))
 	p.keyCache[string(request.Plaintext[:])] = true
 	zap.L().Debug(fmt.Sprintf("###: Number of keys in plugin cache: %d", len(p.keyCache)))
 
@@ -169,11 +169,16 @@ func (p *V2Plugin) Encrypt(ctx context.Context, request *pb.EncryptRequest) (*pb
 	// }
 	// concat res.Text together
 
-	localCipher, err := p.localCrypto.Encrypt(string(request.Plaintext))
+	localCipher, err := p.localCrypto.Encrypt(request.Plaintext)
 	if err != nil {
 		return nil, err
 	}
-	mergedCipher := tpm.WrapCipher(result.CiphertextBlob, localCipher)
+	mergedCipher, err := tpm.WrapCipherV2(result.CiphertextBlob, localCipher)
+	if err != nil {
+		return nil, err
+	}
+	zap.L().Debug(fmt.Sprintf("##x1: len(kmsCipher): %d bytes, len(tpmCipher): %d bytes", len(result.CiphertextBlob), len(localCipher)))
+	zap.L().Debug(fmt.Sprintf("##x2: mergedCipher has length of %d bytes", len(mergedCipher)))
 
 	zap.L().Debug("encrypt operation successful")
 	kmsLatencyMetric.WithLabelValues(p.keyID, kmsplugin.StatusSuccess, kmsplugin.OperationEncrypt, GRPC_V2).Observe(kmsplugin.GetMillisecondsSince(startTime))
@@ -193,14 +198,14 @@ func (p *V2Plugin) Decrypt(ctx context.Context, request *pb.DecryptRequest) (*pb
 
 	zap.L().Debug("##3: plugin has been requested to decrypt: '" + fmt.Sprintf("0x%x", request.Ciphertext) + "'")
 
-	mergedCipher, err := tpm.UnwrapCipher(request.Ciphertext)
+	mergedCipher, err := tpm.UnwrapCipherV2(request.Ciphertext)
 	if err != nil {
 		return nil, err
 	}
 
 	startTime := time.Now()
 	input := &kms.DecryptInput{
-		CiphertextBlob: mergedCipher.Kmsenc,
+		CiphertextBlob: mergedCipher.Cipher1,
 	}
 	if len(p.encryptionCtx) > 0 {
 		zap.L().Debug("configuring encryption context", zap.String("ctx", fmt.Sprintf("%v", p.encryptionCtx)))
@@ -217,7 +222,7 @@ func (p *V2Plugin) Decrypt(ctx context.Context, request *pb.DecryptRequest) (*pb
 		// 	return res, nil
 		// }
 
-		dek, err := p.localCrypto.Decrypt(string(mergedCipher.Tpmenc))
+		dek, err := p.localCrypto.Decrypt(mergedCipher.Cipher2)
 		if err == nil {
 			return &pb.DecryptResponse{Plaintext: []byte(dek)}, nil
 		} else {

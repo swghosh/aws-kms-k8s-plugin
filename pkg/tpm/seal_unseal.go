@@ -16,11 +16,14 @@ type TPMSealer struct {
 }
 
 func NewTPMSealer(tpmDevice *io.ReadWriteCloser, pcrToUse int) (*TPMSealer, error) {
-	srk, err := client.StorageRootKeyECC(*tpmDevice)
+	key := client.SRKTemplateECC()
+
+	srk, err := client.NewCachedKey(*tpmDevice, tpm2.HandleOwner, key, client.SRKReservedHandle)
 	if err != nil {
 		return nil, err
 	}
-	sel := tpm2.PCRSelection{Hash: tpm2.AlgSHA256, PCRs: []int{pcrToUse}}
+	_ = pcrToUse
+	sel := tpm2.PCRSelection{Hash: tpm2.AlgSHA256, PCRs: []int{}}
 
 	t := TPMSealer{
 		TPMDevice: tpmDevice,
@@ -30,15 +33,17 @@ func NewTPMSealer(tpmDevice *io.ReadWriteCloser, pcrToUse int) (*TPMSealer, erro
 	return &t, nil
 }
 
-func (t *TPMSealer) Seal(secret string) (*tpm.SealedBytes, error) {
-	sealedBlob, err := t.srk.Seal([]byte(secret), client.SealOpts{Current: t.pcrSel})
+func (t *TPMSealer) Seal(secret []byte) (*tpm.SealedBytes, error) {
+	sealedBlob, err := t.srk.Seal(secret, client.SealOpts{Current: t.pcrSel})
+	sealedBlob.CertifiedPcrs = nil
+	sealedBlob.Pcrs = []uint32{}
 	return sealedBlob, err
 }
 
-func (t *TPMSealer) Unseal(sealedBlob *tpm.SealedBytes) (plaintextSecret string, err error) {
+func (t *TPMSealer) Unseal(sealedBlob *tpm.SealedBytes) (plaintextSecret []byte, err error) {
 	secretBytes, err := t.srk.Unseal(sealedBlob, client.UnsealOpts{CertifyCurrent: t.pcrSel})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return string(secretBytes[:]), nil
+	return secretBytes, nil
 }
